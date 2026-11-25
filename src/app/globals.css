@@ -1,0 +1,46 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html { -webkit-text-size-adjust: 100%; }
+body {
+  min-height: 100vh;
+  color: #14231a;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  background:
+    radial-gradient(900px 560px at 8% -8%, #f6faf1 0%, transparent 62%),
+    radial-gradient(820px 620px at 100% 105%, #bfe6d2 0%, transparent 60%),
+    linear-gradient(160deg, #eaf1e4 0%, #d8edd2 55%, #cbe8d6 100%);
+  background-attachment: fixed;
+}
+:focus-visible { outline: 3px solid #2c5230; outline-offset: 2px; }
+
+@layer components {
+  .glass {
+    @apply rounded-[1.75rem] border border-white/80 bg-white/55 backdrop-blur-xl;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 18px 40px -20px rgba(44, 82, 48, 0.35);
+  }
+  .glass-soft {
+    @apply rounded-2xl border border-white/80 bg-white/45 backdrop-blur-lg;
+    box-shadow: 0 8px 24px -16px rgba(44, 82, 48, 0.35);
+  }
+  .glass-strong {
+    @apply border border-white/90 bg-white/90 backdrop-blur-2xl;
+    box-shadow: 0 30px 60px -20px rgba(31, 61, 36, 0.45);
+  }
+  .chip {
+    @apply min-h-[48px] rounded-full border border-white/80 bg-white/45 px-4 text-sm font-semibold text-moss-900 backdrop-blur transition hover:bg-white/80;
+  }
+  .chip-on {
+    @apply bg-white font-bold text-slate-900 ring-2 ring-moss-600;
+    box-shadow: 0 6px 16px -8px rgba(44, 82, 48, 0.5);
+  }
+  .field {
+    @apply min-h-[48px] w-full rounded-2xl border border-white/90 bg-white/70 px-4 text-base text-slate-900 placeholder:text-slate-500 focus:border-moss-600 focus:bg-white;
+    box-shadow: inset 0 1px 2px rgba(44, 82, 48, 0.12);
+  }
+  .orb {
+    background: radial-gradient(circle at 34% 28%, #f7ffe8 0%, #a9dc92 38%, #3f9a6b 100%);
+    box-shadow: 0 10px 24px -6px rgba(63, 154, 107, 0.55), inset 0 -4px 8px rgba(31, 61, 36, 0.18);
+  }
+}
