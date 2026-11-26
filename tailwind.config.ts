@@ -5,10 +5,27 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        moss: {
-          50: '#f3f9f1', 100: '#e3f2de', 200: '#c9e6c0', 300: '#a7d49b', 400: '#82bd75',
-          500: '#5fa353', 600: '#4a8441', 700: '#3b6a35', 800: '#2c5230', 900: '#1f3d24',
+        bg: 'var(--bg)',
+        surface: 'var(--surface)',
+        surface2: 'var(--surface-2)',
+        line: 'var(--line)',
+        ink: 'var(--ink)',
+        mute: 'var(--mute)',
+        brand: { DEFAULT: 'var(--brand)', dark: 'var(--brand-dark)', soft: 'var(--brand-soft)' },
+        tri: {
+          red: 'var(--tri-red)',
+          redSoft: 'var(--tri-red-soft)',
+          redInk: 'var(--tri-red-ink)',
+          amber: 'var(--tri-amber)',
+          amberSoft: 'var(--tri-amber-soft)',
+          amberInk: 'var(--tri-amber-ink)',
+          ok: 'var(--tri-ok)',
+          okSoft: 'var(--tri-ok-soft)',
+          okInk: 'var(--tri-ok-ink)',
         },
+      },
+      fontFamily: {
+        sans: ['"Figtree Variable"', '"Noto Sans Variable"', 'system-ui', 'sans-serif'],
       },
     },
   },

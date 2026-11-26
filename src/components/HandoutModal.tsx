@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import { Check, Copy, Loader2, MessageCircle, Printer, X } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { AlertCircle, Check, Copy, Loader2, MessageCircle, Printer, X } from 'lucide-react';
 import { LANGUAGES, isPatientHandout, type Language, type PatientHandout } from '@/lib/schemas';
 
 interface Props {
@@ -19,6 +19,8 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+const FOCUSABLE = 'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 export default function HandoutModal({ handout, onClose }: Props) {
   const [language, setLanguage] = useState<Language>('English');
   const [loading, setLoading] = useState(false);
@@ -26,6 +28,8 @@ export default function HandoutModal({ handout, onClose }: Props) {
   const [copied, setCopied] = useState(false);
   const [, setVersion] = useState(0);
   const cache = useRef<Map<Language, PatientHandout>>(new Map([['English', handout]]));
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const opener = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     cache.current = new Map([['English', handout]]);
@@ -33,13 +37,41 @@ export default function HandoutModal({ handout, onClose }: Props) {
     setVersion((v) => v + 1);
   }, [handout]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+  // Focus management: move focus in, trap Tab, close on Escape, restore focus on close.
+  const close = useCallback(() => {
+    onClose();
+    opener.current?.focus();
   }, [onClose]);
+
+  useEffect(() => {
+    opener.current = document.activeElement as HTMLElement | null;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    dialogRef.current?.querySelector<HTMLElement>('[data-autofocus]')?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        close();
+        return;
+      }
+      if (e.key !== 'Tab' || !dialogRef.current) return;
+      const items = Array.from(dialogRef.current.querySelectorAll<HTMLElement>(FOCUSABLE));
+      if (items.length === 0) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [close]);
 
   async function choose(lang: Language) {
     setError(null);
@@ -98,50 +130,51 @@ export default function HandoutModal({ handout, onClose }: Props) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/60 sm:items-center" role="dialog" aria-modal="true" aria-label="Patient handout">
-      <div className="flex max-h-[92vh] w-full max-w-lg flex-col glass-strong rounded-t-[2rem] sm:rounded-[2rem]">
-        <div className="flex items-center justify-between border-b border-white/70 p-4">
-          <h2 className="text-lg font-bold text-slate-900">Patient handout</h2>
-          <button type="button" onClick={onClose} aria-label="Close" className="flex h-12 w-12 items-center justify-center rounded-full hover:bg-slate-100">
-            <X className="h-6 w-6" />
+    <div className="fixed inset-0 z-[60] flex items-end justify-center bg-[rgba(15,42,34,0.6)] sm:items-center sm:p-4" onMouseDown={(e) => e.target === e.currentTarget && close()}>
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="handout-title" className="flex max-h-[92vh] w-full max-w-lg flex-col rounded-t-3xl bg-surface shadow-2xl sm:rounded-3xl">
+        <div className="flex items-center justify-between border-b border-line p-4">
+          <h2 id="handout-title" className="text-lg font-bold text-ink">
+            Patient handout
+          </h2>
+          <button type="button" data-autofocus onClick={close} aria-label="Close handout" className="flex h-12 w-12 cursor-pointer items-center justify-center rounded-full transition-colors duration-150 hover:bg-surface2">
+            <X className="h-6 w-6" aria-hidden="true" />
           </button>
         </div>
 
-        <div className="flex gap-2 overflow-x-auto p-4 pb-2" role="tablist" aria-label="Language">
-          {LANGUAGES.map((l) => (
-            <button
-              key={l}
-              type="button"
-              role="tab"
-              aria-selected={language === l}
-              onClick={() => choose(l)}
-              className={`chip shrink-0 ${language === l ? 'chip-on' : ''}`}
-            >
-              {l}
-            </button>
-          ))}
+        <div className="flex gap-2 overflow-x-auto p-4 pb-2" role="radiogroup" aria-label="Language">
+          {LANGUAGES.map((l) => {
+            const on = language === l;
+            return (
+              <button key={l} type="button" role="radio" aria-checked={on} onClick={() => choose(l)} className={`chip shrink-0 ${on ? 'chip-on' : ''}`}>
+                {on && <Check className="h-4 w-4" aria-hidden="true" />}
+                {l}
+              </button>
+            );
+          })}
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 pt-2">
+        <div className="flex-1 overflow-y-auto p-4 pt-2" aria-live="polite">
           {loading ? (
-            <div className="flex items-center gap-2 py-10 text-slate-700" aria-live="polite">
-              <Loader2 className="h-5 w-5 animate-spin" /> Translating to {language}...
+            <div className="flex items-center gap-2 py-10 text-mute">
+              <Loader2 className="h-5 w-5 motion-safe:animate-spin" aria-hidden="true" /> Translating to {language}…
             </div>
           ) : (
-            <article className="space-y-4 text-base leading-relaxed text-slate-900">
-              <h3 className="text-xl font-bold">{current.title}</h3>
+            <article className="space-y-4 text-lg leading-relaxed text-ink">
+              <h3 className="text-xl font-extrabold">{current.title}</h3>
               <p>{current.summary}</p>
               <div>
                 <h4 className="mb-1 font-bold">Home care</h4>
-                <ol className="list-decimal space-y-1 pl-6">
+                <ol className="list-decimal space-y-1.5 pl-6">
                   {current.home_care_steps.map((s, i) => (
                     <li key={i}>{s}</li>
                   ))}
                 </ol>
               </div>
-              <div className="rounded-xl border-2 border-red-600 bg-red-50 p-3">
-                <h4 className="mb-1 font-bold text-red-800">Go to the clinic or hospital immediately if:</h4>
-                <ul className="list-disc space-y-1 pl-5 text-red-900">
+              <div className="rounded-xl border-2 border-tri-red bg-tri-redSoft p-4">
+                <h4 className="mb-1 flex items-center gap-2 font-bold text-tri-redInk">
+                  <AlertCircle className="h-5 w-5 shrink-0" aria-hidden="true" /> Go to the clinic or hospital immediately if:
+                </h4>
+                <ul className="list-disc space-y-1.5 pl-6 text-tri-redInk">
                   {current.warning_signs_return_immediately.map((s, i) => (
                     <li key={i}>{s}</li>
                   ))}
@@ -150,26 +183,26 @@ export default function HandoutModal({ handout, onClose }: Props) {
             </article>
           )}
           {error && (
-            <p role="alert" className="mt-3 rounded-xl border-2 border-red-300 bg-red-50 p-3 text-sm font-medium text-red-800">
-              {error}
+            <p role="alert" className="err mt-3 rounded-xl border-2 border-tri-red bg-tri-redSoft p-3">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" /> {error}
             </p>
           )}
         </div>
 
-        <div className="grid grid-cols-3 gap-2 border-t border-white/70 p-4">
+        <div className="grid grid-cols-3 gap-2 border-t border-line p-4">
           <a
             href={`https://wa.me/?text=${encodeURIComponent(text)}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex min-h-[48px] items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-2 text-sm font-bold text-white hover:bg-emerald-700"
+            className="btn bg-tri-ok px-2 text-sm text-white hover:bg-tri-okInk"
           >
             <MessageCircle className="h-5 w-5" aria-hidden="true" /> WhatsApp
           </a>
-          <button type="button" onClick={copy} className="flex min-h-[48px] items-center justify-center gap-1.5 rounded-full border border-white/80 bg-white/60 px-2 text-sm font-bold text-slate-900 hover:border-moss-700">
-            {copied ? <Check className="h-5 w-5 text-emerald-600" aria-hidden="true" /> : <Copy className="h-5 w-5" aria-hidden="true" />}
+          <button type="button" onClick={copy} className="btn-secondary px-2 text-sm">
+            {copied ? <Check className="h-5 w-5 text-tri-ok" aria-hidden="true" /> : <Copy className="h-5 w-5" aria-hidden="true" />}
             {copied ? 'Copied' : 'Copy'}
           </button>
-          <button type="button" onClick={print} className="flex min-h-[48px] items-center justify-center gap-1.5 rounded-full border border-white/80 bg-white/60 px-2 text-sm font-bold text-slate-900 hover:border-moss-700">
+          <button type="button" onClick={print} className="btn-secondary px-2 text-sm">
             <Printer className="h-5 w-5" aria-hidden="true" /> Print
           </button>
         </div>

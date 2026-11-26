@@ -1,4 +1,6 @@
 import type { Metadata, Viewport } from 'next';
+import '@fontsource-variable/figtree';
+import '@fontsource-variable/noto-sans';
 import AppNav from '@/components/AppNav';
 import SafetyBanner from '@/components/SafetyBanner';
 import './globals.css';
@@ -15,9 +17,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body>
         <SafetyBanner />
-        <div className="mx-auto flex max-w-7xl flex-col gap-5 px-4 py-5 lg:flex-row lg:gap-6">
+        <div className="mx-auto flex max-w-7xl gap-6 px-4 py-5 lg:py-8">
           <AppNav />
-          <main className="min-w-0 flex-1 space-y-6">{children}</main>
+          <main className="min-w-0 flex-1 space-y-6 pb-28 lg:pb-8">{children}</main>
         </div>
       </body>
     </html>

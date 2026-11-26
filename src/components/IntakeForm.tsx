@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import { Loader2, Stethoscope, Zap } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { AlertCircle, Baby, Check, CheckCircle2, HeartPulse, Loader2, ShieldCheck, Stethoscope } from 'lucide-react';
 import { AGE_GROUPS, SEXES, type AgeGroup, type Sex, type TriageResponse } from '@/lib/schemas';
 
 interface Props {
@@ -20,6 +20,8 @@ interface FormState {
   durationDays: string;
   symptoms: string;
 }
+
+type Errors = Partial<Record<keyof FormState, string>>;
 
 const EMPTY: FormState = {
   ageGroup: 'adult',
@@ -42,10 +44,11 @@ const AGE_LABELS: Record<AgeGroup, string> = {
   elderly: 'Elderly 60y+',
 };
 
-const DEMOS: { label: string; hint: string; state: FormState }[] = [
+const DEMOS: { label: string; hint: string; Icon: typeof Baby; state: FormState }[] = [
   {
     label: 'Pediatric Danger Sign',
     hint: 'Child, 2 yrs',
+    Icon: Baby,
     state: {
       ...EMPTY,
       ageGroup: 'child',
@@ -60,6 +63,7 @@ const DEMOS: { label: string; hint: string; state: FormState }[] = [
   {
     label: 'Maternal Red Flag',
     hint: 'Pregnant, 28 yrs',
+    Icon: HeartPulse,
     state: {
       ...EMPTY,
       ageGroup: 'pregnant',
@@ -74,6 +78,7 @@ const DEMOS: { label: string; hint: string; state: FormState }[] = [
   {
     label: 'Uncomplicated Mild Case',
     hint: 'Adult, 32 yrs',
+    Icon: ShieldCheck,
     state: {
       ...EMPTY,
       ageGroup: 'adult',
@@ -88,28 +93,93 @@ const DEMOS: { label: string; hint: string; state: FormState }[] = [
   },
 ];
 
-const TILE = ['from-teal-100 via-moss-100 to-white/70', 'from-lime-100 via-moss-200 to-white/70', 'from-moss-100 via-emerald-100 to-white/70'];
+const STEPS = ['Checking vital thresholds', 'Cross-referencing WHO/PHC danger signs via Groq', 'Building action plan and handout'];
 
-const STEPS = [
-  'Checking vital thresholds...',
-  'Cross-referencing WHO/PHC danger signs via Groq...',
-  'Building action plan and handout...',
-];
+function rangeError(value: string, min: number, max: number, label: string, integer = false): string | undefined {
+  if (value.trim() === '') return undefined;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return `${label} must be a number`;
+  if (integer && !Number.isInteger(n)) return `${label} must be a whole number`;
+  if (n < min || n > max) return `${label} should be between ${min} and ${max}`;
+  return undefined;
+}
 
-const inputCls = 'field';
+function validate(f: FormState): Errors {
+  const e: Errors = {};
+  e.temperatureC = rangeError(f.temperatureC, 30, 45, 'Temperature');
+  e.heartRate = rangeError(f.heartRate, 20, 300, 'Heart rate', true);
+  e.respiratoryRate = rangeError(f.respiratoryRate, 5, 120, 'Respiratory rate', true);
+  e.spo2 = rangeError(f.spo2, 40, 100, 'SpO₂');
+  e.ageYears = rangeError(f.ageYears, 0, 120, 'Age');
+  e.durationDays = rangeError(f.durationDays || '1', 0, 365, 'Duration', true);
+  if (f.bloodPressure.trim() !== '' && !/^\d{2,3}\s*\/\s*\d{2,3}$/.test(f.bloodPressure.trim())) {
+    e.bloodPressure = 'Use the format 120/80';
+  }
+  if (f.symptoms.trim().length < 3) e.symptoms = 'Describe the symptoms in a few words';
+  return Object.fromEntries(Object.entries(e).filter(([, v]) => v)) as Errors;
+}
+
+interface FieldProps {
+  id: keyof FormState;
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  onBlur: () => void;
+  error?: string;
+  unit?: string;
+  placeholder?: string;
+  mode?: 'decimal' | 'numeric' | 'text';
+}
+
+function NumField({ id, label, value, onChange, onBlur, error, unit, placeholder, mode = 'decimal' }: FieldProps) {
+  return (
+    <div>
+      <label htmlFor={id} className="label">
+        {label}
+      </label>
+      <div className="relative">
+        <input
+          id={id}
+          className={unit ? 'field pr-16' : 'field'}
+          inputMode={mode}
+          autoComplete="off"
+          value={value}
+          placeholder={placeholder}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? `${id}-err` : undefined}
+          onChange={(e) => onChange(e.target.value)}
+          onBlur={onBlur}
+        />
+        {unit && <span className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-sm font-medium text-mute">{unit}</span>}
+      </div>
+      {error && (
+        <p id={`${id}-err`} className="err">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" /> {error}
+        </p>
+      )}
+    </div>
+  );
+}
 
 export default function IntakeForm({ onResult }: Props) {
   const [form, setForm] = useState<FormState>(EMPTY);
+  const [touched, setTouched] = useState<Partial<Record<keyof FormState, boolean>>>({});
+  const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
   const [step, setStep] = useState(0);
-  const [error, setError] = useState<string | null>(null);
+  const [serverError, setServerError] = useState<string | null>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
+  const errorSummaryRef = useRef<HTMLDivElement>(null);
+
+  const errors = useMemo(() => validate(form), [form]);
+  const shown = (k: keyof FormState): string | undefined => (submitted || touched[k] ? errors[k] : undefined);
+  const touch = (k: keyof FormState) => () => setTouched((t) => ({ ...t, [k]: true }));
 
   useEffect(() => {
     const el = textRef.current;
     if (!el) return;
     el.style.height = 'auto';
-    el.style.height = `${Math.max(el.scrollHeight, 112)}px`;
+    el.style.height = `${Math.max(el.scrollHeight, 128)}px`;
   }, [form.symptoms]);
 
   useEffect(() => {
@@ -120,14 +190,21 @@ export default function IntakeForm({ onResult }: Props) {
   }, [loading]);
 
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) => setForm((f) => ({ ...f, [key]: value }));
-
   const num = (v: string): number | undefined => (v.trim() === '' ? undefined : Number(v));
+
+  function loadDemo(state: FormState) {
+    setForm(state);
+    setTouched({});
+    setSubmitted(false);
+    setServerError(null);
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    setError(null);
-    if (form.symptoms.trim().length < 3) {
-      setError('Describe the symptoms before running triage.');
+    setServerError(null);
+    setSubmitted(true);
+    if (Object.keys(errors).length > 0) {
+      window.setTimeout(() => errorSummaryRef.current?.focus(), 0);
       return;
     }
     setLoading(true);
@@ -151,149 +228,190 @@ export default function IntakeForm({ onResult }: Props) {
         }),
       });
       const data: unknown = await res.json();
-      if (!res.ok) {
-        const msg = (data as { error?: string }).error ?? 'Triage failed';
-        throw new Error(msg);
-      }
+      if (!res.ok) throw new Error((data as { error?: string }).error ?? 'Triage failed');
       onResult(data as TriageResponse);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Triage failed. Check your connection and try again.');
+      setServerError(err instanceof Error ? err.message : 'Triage failed. Check your connection and try again.');
     } finally {
       setLoading(false);
     }
   }
 
-  const pill = (active: boolean) => `chip ${active ? 'chip-on' : ''}`;
+  const errorList = Object.entries(errors) as [keyof FormState, string][];
 
   return (
-    <form onSubmit={submit} className="space-y-6 glass p-4 sm:p-6">
-      <section aria-label="Quick demo cases">
-        <h2 className="mb-2 flex items-center gap-2 text-sm font-bold text-slate-700">
-          Quick Demo Cases
+    <form onSubmit={submit} noValidate className="card space-y-7 p-4 sm:p-6">
+      <section aria-labelledby="demo-title">
+        <h2 id="demo-title" className="mb-2.5 text-sm font-bold uppercase tracking-wide text-mute">
+          Quick demo cases
         </h2>
-        <div className="grid gap-2 sm:grid-cols-3">
-          {DEMOS.map((d, i) => (
+        <div className="grid gap-2.5 sm:grid-cols-3">
+          {DEMOS.map(({ label, hint, Icon, state }) => (
             <button
-              key={d.label}
+              key={label}
               type="button"
-              onClick={() => {
-                setForm(d.state);
-                setError(null);
-              }}
-              className={`flex min-h-[88px] flex-col justify-end rounded-3xl border border-white/80 bg-gradient-to-br ${TILE[i]} px-4 py-3 text-left shadow-sm transition hover:-translate-y-0.5`}
+              onClick={() => loadDemo(state)}
+              className="flex min-h-[64px] cursor-pointer items-center gap-3 rounded-xl border-2 border-line bg-surface2 p-3 text-left transition-colors duration-150 hover:border-brand hover:bg-brand-soft"
             >
-              <span className="block text-sm font-bold text-slate-900">{d.label}</span>
-              <span className="block text-xs text-slate-600">{d.hint}</span>
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-surface text-brand-dark">
+                <Icon className="h-5 w-5" aria-hidden="true" />
+              </span>
+              <span>
+                <span className="block text-sm font-bold leading-tight text-ink">{label}</span>
+                <span className="block text-sm text-mute">{hint}</span>
+              </span>
             </button>
           ))}
         </div>
       </section>
 
-      <fieldset>
-        <legend className="mb-2 text-sm font-bold text-slate-700">Age group</legend>
-        <div className="flex flex-wrap gap-2">
-          {AGE_GROUPS.map((a) => (
-            <button
-              key={a}
-              type="button"
-              aria-pressed={form.ageGroup === a}
-              onClick={() => setForm((f) => ({ ...f, ageGroup: a, sex: a === 'pregnant' ? 'female' : f.sex }))}
-              className={pill(form.ageGroup === a)}
-            >
-              {AGE_LABELS[a]}
-            </button>
-          ))}
-        </div>
-      </fieldset>
-
-      <div className="grid grid-cols-2 gap-4">
-        <fieldset>
-          <legend className="mb-2 text-sm font-bold text-slate-700">Sex</legend>
-          <div className="flex gap-2">
-            {SEXES.map((s) => (
-              <button
-                key={s}
-                type="button"
-                aria-pressed={form.sex === s}
-                disabled={form.ageGroup === 'pregnant' && s === 'male'}
-                onClick={() => set('sex', s)}
-                className={`${pill(form.sex === s)} flex-1 capitalize disabled:opacity-40`}
-              >
-                {s}
-              </button>
+      {submitted && errorList.length > 0 && (
+        <div ref={errorSummaryRef} tabIndex={-1} role="alert" className="rounded-xl border-2 border-tri-red bg-tri-redSoft p-4 outline-none">
+          <p className="flex items-center gap-2 font-bold text-tri-redInk">
+            <AlertCircle className="h-5 w-5" aria-hidden="true" /> Please fix {errorList.length} {errorList.length === 1 ? 'item' : 'items'}
+          </p>
+          <ul className="mt-2 list-disc space-y-1 pl-6 text-sm text-tri-redInk">
+            {errorList.map(([k, msg]) => (
+              <li key={k}>
+                <a href={`#${k}`} className="font-semibold underline">
+                  {msg}
+                </a>
+              </li>
             ))}
+          </ul>
+        </div>
+      )}
+
+      <section aria-labelledby="s1" className="space-y-4">
+        <h2 id="s1" className="section-title">
+          <span className="step-dot" aria-hidden="true">1</span> Patient
+        </h2>
+        <fieldset>
+          <legend className="label">Age group</legend>
+          <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Age group">
+            {AGE_GROUPS.map((a) => {
+              const on = form.ageGroup === a;
+              return (
+                <button
+                  key={a}
+                  type="button"
+                  role="radio"
+                  aria-checked={on}
+                  onClick={() => setForm((f) => ({ ...f, ageGroup: a, sex: a === 'pregnant' ? 'female' : f.sex }))}
+                  className={`chip ${on ? 'chip-on' : ''}`}
+                >
+                  {on && <Check className="h-4 w-4" aria-hidden="true" />}
+                  {AGE_LABELS[a]}
+                </button>
+              );
+            })}
           </div>
         </fieldset>
-        <label className="block">
-          <span className="mb-2 block text-sm font-bold text-slate-700">Age (years, optional)</span>
-          <input className={inputCls} inputMode="decimal" value={form.ageYears} onChange={(e) => set('ageYears', e.target.value)} placeholder="e.g. 2" />
-        </label>
-      </div>
-
-      <fieldset>
-        <legend className="mb-2 text-sm font-bold text-slate-700">Vitals (leave blank if not measured)</legend>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          <label className="block">
-            <span className="mb-1 block text-xs font-semibold text-slate-600">Temp (°C)</span>
-            <input className={inputCls} inputMode="decimal" value={form.temperatureC} onChange={(e) => set('temperatureC', e.target.value)} placeholder="37.0" />
-          </label>
-          <label className="block">
-            <span className="mb-1 block text-xs font-semibold text-slate-600">Heart rate (bpm)</span>
-            <input className={inputCls} inputMode="numeric" value={form.heartRate} onChange={(e) => set('heartRate', e.target.value)} placeholder="80" />
-          </label>
-          <label className="block">
-            <span className="mb-1 block text-xs font-semibold text-slate-600">Resp. rate (/min)</span>
-            <input className={inputCls} inputMode="numeric" value={form.respiratoryRate} onChange={(e) => set('respiratoryRate', e.target.value)} placeholder="20" />
-          </label>
-          <label className="block">
-            <span className="mb-1 block text-xs font-semibold text-slate-600">BP (mmHg)</span>
-            <input className={inputCls} value={form.bloodPressure} onChange={(e) => set('bloodPressure', e.target.value)} placeholder="120/80" />
-          </label>
-          <label className="block">
-            <span className="mb-1 block text-xs font-semibold text-slate-600">SpO₂ (%)</span>
-            <input className={inputCls} inputMode="numeric" value={form.spo2} onChange={(e) => set('spo2', e.target.value)} placeholder="97" />
-          </label>
-          <label className="block">
-            <span className="mb-1 block text-xs font-semibold text-slate-600">Duration (days)</span>
-            <input className={inputCls} inputMode="numeric" value={form.durationDays} onChange={(e) => set('durationDays', e.target.value)} placeholder="1" />
-          </label>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <fieldset>
+            <legend className="label">Sex</legend>
+            <div className="flex gap-2" role="radiogroup" aria-label="Sex">
+              {SEXES.map((s) => {
+                const on = form.sex === s;
+                const disabled = form.ageGroup === 'pregnant' && s === 'male';
+                return (
+                  <button
+                    key={s}
+                    type="button"
+                    role="radio"
+                    aria-checked={on}
+                    disabled={disabled}
+                    onClick={() => set('sex', s)}
+                    className={`chip flex-1 justify-center capitalize disabled:cursor-not-allowed disabled:opacity-40 ${on ? 'chip-on' : ''}`}
+                  >
+                    {on && <Check className="h-4 w-4" aria-hidden="true" />}
+                    {s}
+                  </button>
+                );
+              })}
+            </div>
+          </fieldset>
+          <NumField id="ageYears" label="Age (optional)" unit="years" value={form.ageYears} onChange={(v) => set('ageYears', v)} onBlur={touch('ageYears')} error={shown('ageYears')} placeholder="e.g. 2" />
         </div>
-      </fieldset>
+      </section>
 
-      <label className="block">
-        <span className="mb-2 block text-sm font-bold text-slate-700">Symptoms</span>
-        <textarea
-          ref={textRef}
-          value={form.symptoms}
-          onChange={(e) => set('symptoms', e.target.value)}
-          placeholder='Describe in your own words, e.g. "body dey hot", "running stomach", "convulsion"'
-          className="field min-h-[112px] resize-none overflow-hidden py-3"
-        />
-      </label>
+      <section aria-labelledby="s2" className="space-y-4">
+        <div>
+          <h2 id="s2" className="section-title">
+            <span className="step-dot" aria-hidden="true">2</span> Vitals
+          </h2>
+          <p className="hint ml-[2.375rem]">Leave blank anything you did not measure.</p>
+        </div>
+        <div className="grid grid-cols-1 gap-4 min-[420px]:grid-cols-2 sm:grid-cols-3">
+          <NumField id="temperatureC" label="Temperature" unit="°C" value={form.temperatureC} onChange={(v) => set('temperatureC', v)} onBlur={touch('temperatureC')} error={shown('temperatureC')} placeholder="37.0" />
+          <NumField id="heartRate" label="Heart rate" unit="bpm" mode="numeric" value={form.heartRate} onChange={(v) => set('heartRate', v)} onBlur={touch('heartRate')} error={shown('heartRate')} placeholder="80" />
+          <NumField id="respiratoryRate" label="Resp. rate" unit="/min" mode="numeric" value={form.respiratoryRate} onChange={(v) => set('respiratoryRate', v)} onBlur={touch('respiratoryRate')} error={shown('respiratoryRate')} placeholder="20" />
+          <NumField id="bloodPressure" label="Blood pressure" unit="mmHg" mode="text" value={form.bloodPressure} onChange={(v) => set('bloodPressure', v)} onBlur={touch('bloodPressure')} error={shown('bloodPressure')} placeholder="120/80" />
+          <NumField id="spo2" label="SpO₂" unit="%" mode="numeric" value={form.spo2} onChange={(v) => set('spo2', v)} onBlur={touch('spo2')} error={shown('spo2')} placeholder="97" />
+          <NumField id="durationDays" label="Duration" unit="days" mode="numeric" value={form.durationDays} onChange={(v) => set('durationDays', v)} onBlur={touch('durationDays')} error={shown('durationDays')} placeholder="1" />
+        </div>
+      </section>
 
-      {error && (
-        <p role="alert" className="rounded-xl border-2 border-red-300 bg-red-50 p-3 text-sm font-medium text-red-800">
-          {error}
+      <section aria-labelledby="s3" className="space-y-3">
+        <h2 id="s3" className="section-title">
+          <span className="step-dot" aria-hidden="true">3</span> Symptoms
+        </h2>
+        <div>
+          <label htmlFor="symptoms" className="label">
+            What is the patient or caregiver telling you?
+          </label>
+          <textarea
+            id="symptoms"
+            ref={textRef}
+            value={form.symptoms}
+            maxLength={2000}
+            onChange={(e) => set('symptoms', e.target.value)}
+            onBlur={touch('symptoms')}
+            aria-invalid={shown('symptoms') ? true : undefined}
+            aria-describedby={shown('symptoms') ? 'symptoms-err' : 'symptoms-hint'}
+            placeholder='In your own words, e.g. "body dey hot", "running stomach", "convulsion"'
+            className="field min-h-[128px] resize-none overflow-hidden py-3"
+          />
+          {shown('symptoms') ? (
+            <p id="symptoms-err" className="err">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" /> {errors.symptoms}
+            </p>
+          ) : (
+            <p id="symptoms-hint" className="hint">
+              Local expressions are fine. Include anything about drinking, breathing or alertness.
+            </p>
+          )}
+        </div>
+      </section>
+
+      {serverError && (
+        <p role="alert" className="flex items-start gap-2 rounded-xl border-2 border-tri-red bg-tri-redSoft p-3 text-sm font-semibold text-tri-redInk">
+          <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" /> {serverError}
         </p>
       )}
 
-      <button
-        type="submit"
-        disabled={loading}
-        className="flex min-h-[56px] w-full items-center justify-center gap-2 rounded-full bg-moss-800 px-4 text-base font-bold text-white hover:bg-moss-900 disabled:opacity-80"
-      >
-        {loading ? (
-          <>
-            <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
-            <span aria-live="polite">{STEPS[step]}</span>
-          </>
-        ) : (
-          <>
-            <Stethoscope className="h-5 w-5" aria-hidden="true" />
-            Run triage
-          </>
+      <div className="sticky bottom-[4.75rem] z-10 -mx-4 rounded-b-2xl border-t border-line bg-surface px-4 py-3 sm:-mx-6 sm:px-6 lg:static lg:mx-0 lg:border-0 lg:p-0">
+        <button type="submit" disabled={loading} className="btn-primary min-h-[56px] w-full text-lg">
+          {loading ? <Loader2 className="h-5 w-5 motion-safe:animate-spin" aria-hidden="true" /> : <Stethoscope className="h-5 w-5" aria-hidden="true" />}
+          {loading ? 'Running triage…' : 'Run triage'}
+        </button>
+        {loading && (
+          <ol className="mt-3 space-y-1.5" aria-live="polite">
+            {STEPS.map((s, i) => (
+              <li key={s} className={`flex items-center gap-2 text-sm ${i <= step ? 'font-semibold text-ink' : 'text-mute'}`}>
+                {i < step ? (
+                  <CheckCircle2 className="h-4 w-4 text-tri-ok" aria-hidden="true" />
+                ) : i === step ? (
+                  <Loader2 className="h-4 w-4 motion-safe:animate-spin" aria-hidden="true" />
+                ) : (
+                  <span className="h-4 w-4 rounded-full border-2 border-line" aria-hidden="true" />
+                )}
+                {s}…
+              </li>
+            ))}
+          </ol>
         )}
-      </button>
+      </div>
     </form>
   );
 }
